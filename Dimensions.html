@@ -393,7 +393,7 @@
       let p3 = { x: vertices[indices[elemoff+i+2]*6+0], y: vertices[indices[elemoff+i+2]*6+1], z: vertices[indices[elemoff+i+2]*6+2] };
       let triangle = [ p1, p2, p3 ];
       transform(triangle, x, y, z, scale, rotx, roty, rotz);
-      if (intersects(triangle)) { console.log("yep"); newdim = todimension; } } }
+      if (intersects(triangle)) { newdim = todimension; } } }
    }
   function echodim(){
    gl.bindFramebuffer(gl.FRAMEBUFFER, dimbuf);
