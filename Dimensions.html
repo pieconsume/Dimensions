@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html leng="en">
+ <head>
+  <title>Dimensions</title>
+  <style>
+  * { position: absolute; background: none; margin: 0px; border-width: 0px; padding: 0px; font-family: sans-serif; outline: none; -webkit-touch-callout: none; -webkit-user-select: none; -khtml-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; }
+   canvas { border-style: solid; border-width: 2px; }
+   </style>
+  </head>
+ <body style="background: #000000">
+  <canvas id="dimcanvas" tabindex = "1" width="512" height="512" style="left: 10px; top: 10px; width: 512px; height: 512px; border-color: #040404"></canvas>
+  </body>
+ <script>
+  //Vars
+   const gl = dimcanvas.getContext("webgl2");
+   const vertsource = `#version 300 es
+    in vec3 position;
+    in vec3 colorpos;
+    out vec3 colpos;
+    uniform vec3 campos;
+    uniform vec3 camrot;
+    uniform vec3 objoff;
+    uniform vec3 objrot;
+    uniform float scale;
+    uniform uint clear;
+    uniform highp uint todim;
+    void main(){
+     colpos = colorpos;
+     gl_Position = vec4(position, 1.0);
+     if (clear == 1u) { return; }
+     float oldposition_x, oldposition_y, oldposition_z;
+     //Object scale, rotation, then offset
+      gl_Position *= scale;
+      oldposition_z = gl_Position.z;
+      gl_Position.z = gl_Position.z * cos(objrot.y) - gl_Position.x * sin(objrot.y);
+      gl_Position.x = oldposition_z * sin(objrot.y) + gl_Position.x * cos(objrot.y);
+      oldposition_y = gl_Position.y;
+      gl_Position.y = gl_Position.y * cos(objrot.x) - gl_Position.z * sin(objrot.x);
+      gl_Position.z = oldposition_y * sin(objrot.x) + gl_Position.z * cos(objrot.x);
+      oldposition_x = gl_Position.x;
+      gl_Position.x = gl_Position.x * cos(objrot.z) - gl_Position.y * sin(objrot.z);
+      gl_Position.y = oldposition_x * sin(objrot.z) + gl_Position.y * cos(objrot.z);
+      gl_Position.xyz += objoff;
+     //Camera offset then rotation
+      gl_Position.xyz -= campos;
+      oldposition_z = gl_Position.z;
+      gl_Position.z = gl_Position.z * cos(camrot.y) - gl_Position.x * sin(camrot.y);
+      gl_Position.x = oldposition_z * sin(camrot.y) + gl_Position.x * cos(camrot.y);
+      oldposition_y = gl_Position.y;
+      gl_Position.y = gl_Position.y * cos(camrot.x) - gl_Position.z * sin(camrot.x);
+      gl_Position.z = oldposition_y * sin(camrot.x) + gl_Position.z * cos(camrot.x);
+      oldposition_x = gl_Position.x;
+      gl_Position.x = gl_Position.x * cos(camrot.z) - gl_Position.y * sin(camrot.z);
+      gl_Position.y = oldposition_x * sin(camrot.z) + gl_Position.y * cos(camrot.z);
+      gl_Position.w = gl_Position.z;}`
+   const fragsource = `#version 300 es
+    in highp vec3 colpos;
+    layout(location=0) out highp vec4 color;
+    layout(location=1) out highp uint outputecho;
+    layout(location=2) out highp uint outputdim;
+    uniform highp vec3 color1;
+    uniform highp uint rendertype;
+    uniform highp uint curdim;
+    uniform highp uint drawdim;
+    uniform highp uint todim;
+    uniform highp usampler2D dimecho;
+    uniform highp sampler2D  depthecho;
+    uniform highp usampler2D dimsampler;
+    uniform highp sampler2D  depthsampler;
+    void main(){
+     uint  dim             = texture(dimsampler, vec2(gl_FragCoord.xy / 512.0)).r;
+     highp float depth     = texture(depthsampler, vec2(gl_FragCoord.xy / 512.0)).r;
+     if (rendertype != 2u && ((drawdim != curdim && drawdim != dim)  || (drawdim != curdim && depth < gl_FragCoord.w) || (drawdim == curdim && depth > gl_FragCoord.w && depth != 1.0))) { discard; }
+     if (rendertype == 0u) { color = vec4(color1, 1.0); }
+     else if (rendertype == 1u) { outputecho = todim;  gl_FragDepth = gl_FragCoord.w; }
+     else if (rendertype == 2u) { outputdim = texture(dimecho, vec2(gl_FragCoord.xy / 512.0)).r; gl_FragDepth = texture(depthecho, vec2(gl_FragCoord.xy / 512.0)).r;; }
+     }`;
+   const vertices = [
+    -1.0,+0.0,-1.0,+0,+0,+0, //000, YSquare
+    -1.0,+0.0,+1.0,+0,+0,+1,
+    +1.0,+0.0,+1.0,+1,+0,+1,
+    +1.0,+0.0,-1.0,+1,+0,+0,
+    -1.0,-1.0,+0.0,+0,+0,+0, //004, ZSquare
+    -1.0,+1.0,+0.0,+0,+0,+1,
+    +1.0,+1.0,+0.0,+1,+0,+1,
+    +1.0,-1.0,+0.0,+1,+0,+0,
+    -1.0,-1.0,-1.0,+0,+0,+0, //008, Cube
+    -1.0,-1.0,+1.0,+0,+0,+1,
+    +1.0,-1.0,+1.0,+1,+0,+1,
+    +1.0,-1.0,-1.0,+1,+0,+0,
+    -1.0,+1.0,-1.0,+0,+1,+0,
+    -1.0,+1.0,+1.0,+0,+1,+1,
+    +1.0,+1.0,+1.0,+1,+1,+1,
+    +1.0,+1.0,-1.0,+1,+1,+0,];
+   const indices = [
+    00,01,02,03, //000, 04, [ LINE_LOOP, TRIANGLE_FAN ] YSquare
+    04,05,06,07, //008, 04, [ LINE_LOOP, TRIANGLE_FAN ] ZSquare
+    ];
+   const keystatus = [
+    false,  // 0 Left
+    false,  // 1 Right
+    false,  // 2 Up
+    false,  // 3 Down
+    false,  // 4 W
+    false,  // 5 A
+    false,  // 6 S
+    false,  // 7 D
+    false,  // 8 ShiftLeft
+    false]; // 9 Space
+   const dimensions = [
+    function dim0(source){
+     if (recursions > maxrecursions) { return; }
+     if (dimension != 1){
+      makewindow(gl.TRIANGLE_FAN, 4, 4, 0, 1, 0.0, 0.0, 5.0, 1.0, 0.0, 0.0, 0.0)}
+     recursions++;
+     //Outline
+      gl.uniform1ui(rendertype, 0);
+      gl.uniform1ui(drawdim, 0);
+      gl.uniform3f(objoff, 0.0, 0.0, 5.0);
+      gl.uniform1f(scale, 1.0);
+      gl.uniform3f(objrot, 0.0, 0.0, 0.0);
+      gl.drawElements(gl.LINE_LOOP, 4, gl.UNSIGNED_SHORT, 8);
+     //Draw shape
+      gl.uniform1ui(rendertype, 0);
+      gl.uniform1ui(drawdim, 0);
+      gl.uniform3f(objoff, -3.0, 0.0, 5.0);
+      gl.uniform1f(scale, 1.0);
+      gl.uniform3f(objrot, 0.0, 0.0, 0.0);
+      gl.drawElements(gl.TRIANGLE_FAN, 4, gl.UNSIGNED_SHORT, 8);
+     dimensions[1](); },
+    function dim1(source){
+     if (recursions > maxrecursions) { return; }
+     recursions++;
+      //Portal to 0 outline
+      gl.uniform1ui(rendertype, 0);
+      gl.uniform1ui(drawdim, 1);
+      gl.uniform3f(objoff, 0.0, 0.0, 5.0);
+      gl.uniform1f(scale, 1.0);
+      gl.uniform3f(objrot, 0.0, 0.0, 0.0);
+      gl.drawElements(gl.LINE_LOOP, 4, gl.UNSIGNED_SHORT, 8);
+     if (dimension != 0){
+      makewindow(gl.TRIANGLE_FAN, 4, 4, 1, 0, 0.0, 0.0, 5.0, 1.0, 0.0, 0.0, 0.0);}
+     if (dimension != 2){
+      makewindow(gl.TRIANGLE_FAN, 4, 4, 1, 2, 1.0, 0.0, 7.0, 1.0, 0.0, 90 * (Math.PI / 180), 0.0, 0.0);}
+     //Portal to 0 outline
+      gl.uniform1ui(rendertype, 0);
+      gl.uniform1ui(drawdim, 1);
+      gl.uniform3f(objoff, 0.0, 0.0, 5.0);
+      gl.uniform1f(scale, 1.0);
+      gl.uniform3f(objrot, 0.0, 0.0, 0.0);
+      gl.drawElements(gl.LINE_LOOP, 4, gl.UNSIGNED_SHORT, 8);
+     //Portal to 2 outline
+      gl.uniform1ui(rendertype, 0);
+      gl.uniform1ui(drawdim, 1);
+      gl.uniform3f(objoff, 1.0, 0.0, 7.0);
+      gl.uniform1f(scale, 1.0);
+      gl.uniform3f(objrot, 0.0, 90 * (Math.PI / 180), 0.0);
+      gl.drawElements(gl.LINE_LOOP, 4, gl.UNSIGNED_SHORT, 8);
+     //Draw shape
+      gl.uniform1ui(rendertype, 0);
+      gl.uniform1ui(drawdim, 1);
+      gl.uniform3f(objoff, 0.0, 0.0, 10.0);
+      gl.uniform1f(scale, 1.0);
+      gl.uniform3f(objrot, 0.0, 0.0, 0.0);
+      gl.drawElements(gl.TRIANGLE_FAN, 4, gl.UNSIGNED_SHORT, 8);
+     //dimensions[0]();
+     dimensions[2](); },
+    function dim2(source){
+     if (recursions > maxrecursions) { return; }
+     recursions++;
+     if (dimension == 2) {
+      makewindow(gl.TRIANGLE_FAN, 4, 4, 2, 1, 1.0, 0.0, 7.0, 1.0, 0.0, 90 * (Math.PI / 180), 0.0, 0.0);}
+     //Outline
+      gl.uniform1ui(rendertype, 0);
+      gl.uniform1ui(drawdim, 2);
+      gl.uniform3f(objoff, 1.0, 0.0, 7.0);
+      gl.uniform1f(scale, 1.0);
+      gl.uniform3f(objrot, 0.0, 90 * (Math.PI / 180), 0.0);
+      gl.drawElements(gl.LINE_LOOP, 4, gl.UNSIGNED_SHORT, 8);
+     //Draw shape
+      gl.uniform1ui(rendertype, 0);
+      gl.uniform1ui(drawdim, 2);
+      gl.uniform3f(objoff, 2.0, 0.0, 7.0);
+      gl.uniform1f(scale, 1.0);
+      gl.uniform3f(objrot, 0.0, 90 * (Math.PI / 180), 0.0);
+      gl.drawElements(gl.TRIANGLE_FAN, 4, gl.UNSIGNED_SHORT, 8);
+      dimensions[1]();}, 
+     ];
+   const windows = [ [], [], [] ];
+  //Shader
+   let vertshader = gl.createShader(gl.VERTEX_SHADER);
+   let fragshader = gl.createShader(gl.FRAGMENT_SHADER);
+   gl.shaderSource(vertshader, vertsource);
+   gl.shaderSource(fragshader, fragsource);
+   gl.compileShader(vertshader);
+   gl.compileShader(fragshader);
+   let vertsuccess = gl.getShaderParameter(vertshader, gl.COMPILE_STATUS);
+   let fragsuccess = gl.getShaderParameter(fragshader, gl.COMPILE_STATUS);
+   if (!vertsuccess) { console.log(gl.getShaderInfoLog(vertshader)); }
+   if (!fragsuccess) { console.log(gl.getShaderInfoLog(fragshader)); }
+   let program = gl.createProgram();
+   gl.attachShader(program, vertshader);
+   gl.attachShader(program, fragshader);
+   gl.linkProgram(program);
+   let programsuccess = gl.getProgramParameter(program, gl.LINK_STATUS);
+   if (!programsuccess) { console.log(gl.getProgramInfoLog(program)); }
+   gl.useProgram(program);
+  //Uniforms
+   const position = gl.getAttribLocation(program, "position");
+   const colorpos = gl.getAttribLocation(program, "colorpos");
+   const campos = gl.getUniformLocation(program, "campos");
+   const camrot = gl.getUniformLocation(program, "camrot");
+   const objoff = gl.getUniformLocation(program, "objoff");
+   const objrot = gl.getUniformLocation(program, "objrot");
+   const scale  = gl.getUniformLocation(program, "scale");
+   const clear  = gl.getUniformLocation(program, "clear");
+   const rendertype   = gl.getUniformLocation(program, "rendertype");
+   const color1       = gl.getUniformLocation(program, "color1");
+   const curdim       = gl.getUniformLocation(program, "curdim");
+   const drawdim      = gl.getUniformLocation(program, "drawdim");
+   const todim        = gl.getUniformLocation(program, "todim");
+   const dimecho      = gl.getUniformLocation(program, "dimecho");
+   const dimsampler   = gl.getUniformLocation(program, "dimsampler");
+   const depthecho    = gl.getUniformLocation(program, "depthecho");
+   const depthsampler = gl.getUniformLocation(program, "depthsampler");
+  //Buffers
+   const vao = gl.createVertexArray();
+   const vbo = gl.createBuffer(), ebo = gl.createBuffer();
+   gl.bindVertexArray(vao);
+   gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
+   gl.enableVertexAttribArray(position);
+   gl.enableVertexAttribArray(colorpos);
+   gl.vertexAttribPointer(position, 4, gl.FLOAT, false, 24, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, null);
+   gl.vertexAttribPointer(colorpos, 4, gl.FLOAT, true, 24, 12);
+  //Framebuffer
+   //Dimension textures
+    gl.activeTexture(gl.TEXTURE0);
+    const dimechotex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, dimechotex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, 512, 512, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    const dimtex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, dimtex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32UI, 512, 512, 0, gl.RED_INTEGER, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+   //Depth textures
+    gl.activeTexture(gl.TEXTURE1);
+    const depthechotex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, depthechotex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT16, 512, 512, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    const depthtex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, depthtex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT16, 512, 512, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+   //Framebuffers
+    const echobuf = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, echobuf);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, dimechotex, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthechotex, 0);
+    gl.drawBuffers([ gl.NONE, gl.COLOR_ATTACHMENT1 ]);
+    const dimbuf = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, dimbuf);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, dimtex, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthtex, 0);
+    gl.drawBuffers([ gl.NONE, gl.NONE, gl.COLOR_ATTACHMENT2 ]);
+  //Misc
+   gl.enable(gl.DEPTH_TEST);
+   gl.depthFunc(gl.LEQUAL);
+   gl.clearDepth(1.0);
+   gl.uniform1i(dimecho, 0);
+   gl.uniform1i(dimsampler, 0);
+   gl.uniform1i(depthecho, 1);
+   gl.uniform1i(depthsampler, 1);
+   gl.viewport(0, 0, 512, 512);
+   gl.clearColor(0.0, 0.0, 0.0, 0.0);
+   let rotspeed = 0.05, movspeed = 0.1, cx = 0.0, cy = 0.0, cz = 0.0, rx = 0.0, ry = 0.0, rz = 0.0, ox, oy, oz;
+   let dimension = 0, newdim = 0, recursions, maxrecursions = 5;
+   dimcanvas.addEventListener("focus", () => renderInterval = setInterval(render, 16));
+   dimcanvas.addEventListener("blur", () => clearInterval(renderInterval));
+   addEventListener("keydown", () => keydown());
+   addEventListener("keyup", () => keyup());
+   render();
+  function render(){
+   //Keys
+    dimension = newdim;
+    ox = cx, oy = cy, oz = cz;
+    if (keystatus[0])  { ry += rotspeed; }
+    if (keystatus[1])  { ry -= rotspeed; }
+    if (keystatus[2])  { rx += rotspeed; }
+    if (keystatus[3])  { rx -= rotspeed; }
+    if (keystatus[4])  { cz += movspeed * Math.cos(ry); cx += movspeed * -Math.sin(ry); }
+    if (keystatus[5])  { cx -= movspeed * Math.cos(ry); cz -= movspeed * +Math.sin(ry); }
+    if (keystatus[6])  { cz -= movspeed * Math.cos(ry); cx -= movspeed * -Math.sin(ry); }
+    if (keystatus[7])  { cx += movspeed * Math.cos(ry); cz += movspeed * +Math.sin(ry); }
+    if (keystatus[8])  { cy -= movspeed; }
+    if (keystatus[9])  { cy += movspeed; }
+   //Uniforms
+    gl.bindFramebuffer(gl.FRAMEBUFFER, dimbuf);
+    gl.clearBufferuiv(gl.COLOR, 1, [ -1, 0, 0, 0 ]);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, echobuf);
+    gl.clearBufferuiv(gl.COLOR, 1, [ -1, 0, 0, 0 ]);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.uniform3f(campos, cx, cy, cz);
+    gl.uniform3f(camrot, rx, ry, rz);
+    gl.uniform1ui(curdim, dimension);
+    gl.uniform3f(color1, 0.0, 0.0, 0.5);
+    recursions = 0;
+   //Drawing
+    dimensions[dimension](); }
+  function makewindow(drawtype, elemoff, elemcount, drawdimension, todimension, x, y, z, scalexyz, rotx, roty, rotz){
+   function addvec(v1, v2)   { return { x: v1.x+v2.x, y: (v1.y+v2.y), z: (v1.z+v2.z) } }
+   function subvec(v1, v2)   { return { x: v1.x-v2.x, y: (v1.y-v2.y), z: (v1.z-v2.z) } }
+   function crossvec(v1, v2) { return { x: (v1.y*v2.z - v1.z*v2.y), y: (v1.z*v2.x - v1.x*v2.z), z: (v1.x*v2.y - v1.y*v2.x) } }
+   function dotproduct(v1, v2) { return v1.x*v2.x + v1.y*v2.y + v1.z*v2.z; }
+   function transform(triangle, x, y, z, scale, rotx, roty, rotz){
+    //Operation order: object scale, object rotation, object offset, camera offset, camera rotation. See vertex shader
+    let oldposition_x, oldposition_y, oldposition_z;
+    for (let i = 0; i < 3; i++){
+    triangle[i].x *= scalexyz; triangle[i].y *= scalexyz; triangle[i].z *= scalexyz;
+    oldposition_z = triangle[i].z;
+    triangle[i].z = triangle[i].z * Math.cos(roty) - triangle[i].x * Math.sin(roty);
+    triangle[i].x = oldposition_z * Math.sin(roty) + triangle[i].x * Math.cos(roty);
+    oldposition_y = triangle[i].y;
+    triangle[i].y = triangle[i].y * Math.cos(rotx) - triangle[i].z * Math.sin(rotx);
+    triangle[i].z = oldposition_y * Math.sin(rotx) + triangle[i].z * Math.cos(rotx);
+    oldposition_x = triangle[i].x;
+    triangle[i].x = triangle[i].x * Math.cos(rotz) - triangle[i].y * Math.sin(rotz);
+    triangle[i].y = oldposition_x * Math.sin(rotz) + triangle[i].y * Math.cos(rotz);
+    triangle[i].x += x;  triangle[i].y += y;  triangle[i].z += z;
+    triangle[i].x -= cx; triangle[i].y -= cy; triangle[i].z -= cz;
+    oldposition_z = triangle[i].z;
+    triangle[i].z = triangle[i].z * Math.cos(ry) - triangle[i].x * Math.sin(ry);
+    triangle[i].x = oldposition_z * Math.sin(ry) + triangle[i].x * Math.cos(ry);
+    oldposition_y = triangle[i].y;
+    triangle[i].y = triangle[i].y * Math.cos(rx) - triangle[i].z * Math.sin(rx);
+    triangle[i].z = oldposition_y * Math.sin(rx) + triangle[i].z * Math.cos(rx);
+    oldposition_x = triangle[i].x;
+    triangle[i].x = triangle[i].x * Math.cos(rz) - triangle[i].y * Math.sin(rz);
+    triangle[i].y = oldposition_x * Math.sin(rz) + triangle[i].y * Math.cos(rz); } }
+   function volumesign(a, b, c, d){
+    let cross0 = subvec(b, a);
+    let cross1 = subvec(c, a);
+    let dot0   = crossvec(cross0, cross1);
+    let dot1   = subvec(d, a);
+    return Math.sign(dotproduct(dot0, dot1)/6);}
+   function intersects(triangle){
+    //https://stackoverflow.com/a/55001684
+    let l1 = { x: 0, y: 0, z: 0 };
+    let l2 = { x: cx-ox, y: cy-oy, z: cz-oz };
+    let s1 = volumesign(l1, triangle[0], triangle[1], triangle[2]);
+    let s2 = volumesign(l2, triangle[0], triangle[1], triangle[2]);
+    if (s1 != s2){
+     let s3 = volumesign(l1, l2, triangle[0], triangle[1]);
+     let s4 = volumesign(l1, l2, triangle[1], triangle[2]);
+     let s5 = volumesign(l1, l2, triangle[2], triangle[0]); 
+     if (s3 == s4 && s4 == s5) { return true; } } }
+   //Draw
+    //Clear
+     gl.uniform1ui(rendertype, 0);
+     gl.uniform1ui(drawdim, drawdimension);
+     gl.uniform3f(color1, 0.0, 0.0, 0.0);
+     gl.uniform3f(objoff, x, y, z);
+     gl.uniform1f(scale, scalexyz);
+     gl.uniform3f(objrot, rotx, roty, rotz);
+     gl.drawElements(drawtype, elemoff, gl.UNSIGNED_SHORT, elemcount * 2);
+     gl.uniform3f(color1, 0.0, 0.0, 0.5);
+    //Depth and stencil
+     gl.bindFramebuffer(gl.FRAMEBUFFER, echobuf);
+     gl.uniform1ui(rendertype, 1);
+     gl.uniform1ui(drawdim, drawdimension);
+     gl.uniform1ui(todim, todimension);
+     gl.uniform3f(objoff, x, y, z);
+     gl.uniform1f(scale, scalexyz);
+     gl.uniform3f(objrot, rotx, roty, rotz);
+     gl.drawElements(drawtype, elemoff, gl.UNSIGNED_SHORT, elemcount * 2);
+     echodim();
+     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+   //Check collisions
+    if (drawdimension != dimension) { return; }
+    if (drawtype == gl.TRIANGLE_FAN){
+     for (let i = 0; i < elemcount-2; i++) {
+      let p1 = { x: vertices[indices[elemoff+i+0]*6+0], y: vertices[indices[elemoff+i+0]*6+1], z: vertices[indices[elemoff+i+0]*6+2] };
+      let p2 = { x: vertices[indices[elemoff+i+1]*6+0], y: vertices[indices[elemoff+i+1]*6+1], z: vertices[indices[elemoff+i+1]*6+2] };
+      let p3 = { x: vertices[indices[elemoff+i+2]*6+0], y: vertices[indices[elemoff+i+2]*6+1], z: vertices[indices[elemoff+i+2]*6+2] };
+      let triangle = [ p1, p2, p3 ];
+      transform(triangle, x, y, z, scale, rotx, roty, rotz);
+      if (intersects(triangle)) { console.log("yep"); newdim = todimension; } } }
+   }
+  function echodim(){
+   gl.bindFramebuffer(gl.FRAMEBUFFER, dimbuf);
+   gl.activeTexture(gl.TEXTURE0);
+   gl.bindTexture(gl.TEXTURE_2D, dimechotex);
+   gl.activeTexture(gl.TEXTURE1);
+   gl.bindTexture(gl.TEXTURE_2D, depthechotex);
+   gl.uniform1ui(clear, 1);
+   gl.uniform1ui(rendertype, 2);
+   gl.drawElements(gl.TRIANGLE_FAN, 4, gl.UNSIGNED_SHORT, 8);
+   gl.uniform1ui(clear, 0);
+   gl.activeTexture(gl.TEXTURE0);
+   gl.bindTexture(gl.TEXTURE_2D, dimtex);
+   gl.activeTexture(gl.TEXTURE1);
+   gl.bindTexture(gl.TEXTURE_2D, depthtex);
+   }
+  function keydown(){
+   if (event.code == "KeyJ")           { keystatus[0] = true; }
+   else if (event.code == "KeyL")      { keystatus[1] = true; }
+   else if (event.code == "KeyI")      { keystatus[2] = true; }
+   else if (event.code == "KeyK")      { keystatus[3] = true; }
+   else if (event.code == "KeyW")      { keystatus[4] = true; } 
+   else if (event.code == "KeyA")      { keystatus[5] = true; }
+   else if (event.code == "KeyS")      { keystatus[6] = true; }
+   else if (event.code == "KeyD")      { keystatus[7] = true; }
+   else if (event.code == "ShiftLeft") { keystatus[8] = true; }
+   else if (event.code == "Space")     { keystatus[9] = true; } }
+  function keyup(){
+   if (event.code == "KeyJ")           { keystatus[0] = false; }
+   else if (event.code == "KeyL")      { keystatus[1] = false; }
+   else if (event.code == "KeyI")      { keystatus[2] = false; }
+   else if (event.code == "KeyK")      { keystatus[3] = false; }
+   else if (event.code == "KeyW")      { keystatus[4] = false; } 
+   else if (event.code == "KeyA")      { keystatus[5] = false; }
+   else if (event.code == "KeyS")      { keystatus[6] = false; }
+   else if (event.code == "KeyD")      { keystatus[7] = false; }
+   else if (event.code == "ShiftLeft") { keystatus[8] = false; }
+   else if (event.code == "Space")     { keystatus[9] = false; } }
+  </script>
+ </html>
